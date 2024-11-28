@@ -1,1 +1,6 @@
 pdfplumber
+groq
+pandas
+opanai
+dotenv
+os
