@@ -2,4 +2,3 @@ pdfplumber
 pandas
 openai
 python-dotenv
-os
