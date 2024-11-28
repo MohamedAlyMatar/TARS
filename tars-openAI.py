@@ -2,7 +2,6 @@ import json
 import streamlit as st
 import pdfplumber
 import re
-from groq import Groq
 import pandas as pd
 from openai import OpenAI
 from dotenv import load_dotenv

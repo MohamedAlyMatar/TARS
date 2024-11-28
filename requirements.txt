@@ -1,5 +1,4 @@
 pdfplumber
-groq
 pandas
 opanai
 dotenv
