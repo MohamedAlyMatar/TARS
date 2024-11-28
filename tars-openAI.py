@@ -17,12 +17,15 @@ def parse_pdf(file):
             parsed_text.append(page.extract_text())
     return "\n".join(parsed_text)
 
-# Load environment variables from .env file
-load_dotenv(override=True)
-api_key = os.getenv("OPENAI_API_KEY")
-if not api_key:
-    raise ValueError("API key not found. Please check your '.env' file.")
-client = OpenAI(api_key=api_key)
+# for local use uncomment this to Load environment variables from .env file
+# load_dotenv(override=True)
+# api_key = os.getenv("OPENAI_API_KEY")
+# if not api_key:
+#     raise ValueError("API key not found. Please check your '.env' file.")
+# client = OpenAI(api_key=api_key)
+
+# for streamlit deployment we use this
+Client = OpenAI(api_key = st.secrets["openai"]["api_key"])
 
 def process_with_llm(resume_text, custom_prompt):
     """
