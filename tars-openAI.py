@@ -25,7 +25,7 @@ def parse_pdf(file):
 # client = OpenAI(api_key=api_key)
 
 # for streamlit deployment we use this
-Client = OpenAI(api_key = st.secrets["openai"]["api_key"])
+client = OpenAI(api_key = st.secrets["openai"]["api_key"])
 
 def process_with_llm(resume_text, custom_prompt):
     """
