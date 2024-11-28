@@ -1,5 +1,5 @@
 pdfplumber
 pandas
-opanai
+openai
 dotenv
 os
