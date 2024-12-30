@@ -7,7 +7,8 @@ from openai import OpenAI
 from dotenv import load_dotenv
 import os
 
-# for local use uncomment this to Load environment variables from .env file
+# ----------------------------------------------------------------------------------- KEYS
+## for local use uncomment this to Load environment variables from .env file
 # load_dotenv(override=True)
 # api_key = os.getenv("OPENAI_API_KEY")
 # if not api_key:
@@ -16,13 +17,12 @@ import os
 
 # Google CSE API key and Search Engine ID
 # GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-# SEARCH_ENGINE_ID = os.getenv("SEARCH_ENGINE_ID")
 
 client = OpenAI(api_key = st.secrets["openai"]["api_key"])
 GOOGLE_API_KEY   = st.secrets["GOOGLE_API_KEY"]
 SEARCH_ENGINE_ID = st.secrets["SEARCH_ENGINE_ID"]
 
-
+# ----------------------------------------------------------------------------------- LLM
 def validate_profile_with_llm(profile_description, custom_criteria):
     """
     Use the LLM to validate if a profile's experience aligns with the desired expertise level.
@@ -66,29 +66,6 @@ def get_top_profiles_with_validation(profiles, custom_criteria, top_n=10):
     # Sort and select the top N profiles (sorting logic can be adjusted based on profile relevance)
     validated_profiles.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
     return validated_profiles[:top_n]
-
-# def google_cse_search(query, num_results=10):
-#     """
-#     Search LinkedIn profiles using Google Custom Search Engine.
-#     """
-#     url = "https://www.googleapis.com/customsearch/v1"
-#     params = {
-#         "key": GOOGLE_API_KEY,
-#         "cx": SEARCH_ENGINE_ID,
-#         "q": query,
-#         "num": min(num_results, 10),  # Max 10 results per request
-#     }
-#     response = requests.get(url, params=params)
-#     if response.status_code == 200:
-#         print(response.json().get("items", []))
-#         return response.json().get("items", [])
-#     else:
-#         st.error(f"Error with Google CSE API: {response.status_code} - {response.text}")
-#         return []
-
-
-# ---------------------------------------------------
-
 
 def rank_profiles_with_llm(profiles, prompt):
     """
@@ -141,8 +118,7 @@ def rank_profiles_with_llm(profiles, prompt):
 
     return sorted(ranked_profiles, key=lambda x: x["score"], reverse=True)
 
-# -----------------------------------------------------------------------------------
-
+# ----------------------------------------------------------------------------------- Google CSE
 def google_cse_search(query, num_results=100):
     """
     Search LinkedIn profiles using Google Custom Search Engine.
@@ -188,7 +164,7 @@ def get_top_profiles(query, prompt, num_results=100, top_n=10):
     return top_profiles
 
 
-# ---------------------------------------- Streamlit UI
+# ----------------------------------------------------------------------------------- Streamlit UI
 st.title("TARS")
 st.subheader("Resume Matching and LinkedIn Search")
 
@@ -214,9 +190,7 @@ if st.button("Search LinkedIn Profiles"):
             query += f" {country}"
         if custom_prompt:
             top_profiles = get_top_profiles(query, custom_prompt, num_results=100, top_n=10)
-            print("\n\nTop Profiles:", top_profiles)
             if top_profiles:
-                # Prepare data for table with clickable links
                 profile_table = []
                 for i, profile in enumerate(top_profiles, start=1):
                     profile_data = profile["profile"]
@@ -224,21 +198,22 @@ if st.button("Search LinkedIn Profiles"):
                         "Rank": i,
                         "Title": profile_data.get("title", "No Title"),
                         "Link": f"[Profile]({profile_data.get('link', '#')})",
-                        "Score": profile["score"],
+                        # "Description": profile_data.get("snippet", "No Description"),
+                        "Relevance Score": profile.get("score", 0)
                     })
-                
-                # Convert to DataFrame
-                df_profiles = pd.DataFrame(profile_table)
 
-                # Display table with clickable links
-                st.subheader("Top 10 LinkedIn Profiles")
-                st.markdown(df_profiles.to_markdown(index=False), unsafe_allow_html=True)
-            else:
-                st.warning("No suitable profiles found!")
+                st.session_state["linkedin_results"] = pd.DataFrame(profile_table)
+                st.write("### Top LinkedIn Profiles")
+                st.table(st.session_state["linkedin_results"])
+
+if st.button("Export Results to CSV"):
+    if not st.session_state["linkedin_results"].empty:
+        csv_data = st.session_state["linkedin_results"].to_csv(index=False)
+        st.download_button(
+            label="Download CSV",
+            data=csv_data,
+            file_name="linkedin_results.csv",
+            mime="text/csv",
+        )
     else:
-        st.warning("Please enter skills to search.")
-
-# Display LinkedIn search results
-if not st.session_state["linkedin_results"].empty:
-    st.subheader("LinkedIn Profiles")
-    st.table(st.session_state["linkedin_results"])
+        st.warning("No results available to export.")
