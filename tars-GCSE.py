@@ -15,14 +15,50 @@ import os
 #     raise ValueError("API key not found. Please check your '.env' file.")
 # client = OpenAI(api_key=api_key)
 
-# Google CSE API key and Search Engine ID
-# GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+## Google CSE API key and Search Engine ID
+# ...
 
 client = OpenAI(api_key = st.secrets["openai"]["api_key"])
 GOOGLE_API_KEY   = st.secrets["GOOGLE_API_KEY"]
 SEARCH_ENGINE_ID = st.secrets["SEARCH_ENGINE_ID"]
 
 # ----------------------------------------------------------------------------------- LLM
+def filter_profile_with_llm(profile, prompt):
+    """
+    Validate whether a profile matches the desired conditions and skills using LLM.
+    """
+    profile_description = (
+        profile.get("pagemap", {})
+        .get("metatags", [{}])[0]
+        .get("og:description", "")
+    )
+    if not profile_description:
+        return False  # Skip if no description is found
+
+    messages = [
+        {"role": "system", "content": """
+            You are a professional Talent Acquisition Critique.
+            Your task is to evaluate a LinkedIn profile description based on the provided criteria.
+            If the profile is a match, respond with 'Match'.
+            Otherwise, respond with 'No Match'.
+        """},
+        {"role": "user", "content": f"Criteria: {prompt}"},
+        {"role": "user", "content": f"Profile Description:\n{profile_description}"}
+    ]
+
+    try:
+        # Query the LLM for validation
+        chat_completion = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=messages,
+            max_tokens=50
+        )
+        response = chat_completion.choices[0].message.content.strip()
+        return response == "Match"
+    except Exception as e:
+        st.error(f"Error validating profile with LLM: {e}")
+        return False
+    
 def validate_profile_with_llm(profile_description, custom_criteria):
     """
     Use the LLM to validate if a profile's experience aligns with the desired expertise level.
@@ -51,25 +87,27 @@ def validate_profile_with_llm(profile_description, custom_criteria):
         st.error(f"Error validating profile with LLM: {e}")
         return False
 
-# Integrate LLM validation into the profile filtering workflow
-def get_top_profiles_with_validation(profiles, custom_criteria, top_n=10):
+def get_top_profiles(query, prompt, num_results=100, top_n=10):
     """
-    Validate and filter profiles using LLM before selecting the top N matches.
+    Search for LinkedIn profiles, rank them using GPT-4o, and return the top N profiles.
     """
-    validated_profiles = []
+    st.info("Searching for profiles...")
+    profiles = google_cse_search(query, num_results=num_results)
+    if not profiles:
+        st.warning("No profiles found.")
+        return []
 
-    for profile in profiles:
-        profile_description = profile.get("description", "")
-        if validate_profile_with_llm(profile_description, custom_criteria):
-            validated_profiles.append(profile)
+    st.info("Ranking profiles...")
+    ranked_profiles = rank_profiles_with_llm(profiles, prompt)
 
-    # Sort and select the top N profiles (sorting logic can be adjusted based on profile relevance)
-    validated_profiles.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
-    return validated_profiles[:top_n]
+    # Filter top N profiles
+    top_profiles = ranked_profiles[:top_n]
+    return top_profiles
 
 def rank_profiles_with_llm(profiles, prompt):
     """
     Rank LinkedIn profiles using GPT-4o based on a custom prompt.
+    Debugging added to ensure correct behavior.
     """
     messages = [
         {"role": "system", "content": """
@@ -86,9 +124,12 @@ def rank_profiles_with_llm(profiles, prompt):
             profile.get("pagemap", {})  # Get 'pagemap' dictionary or return an empty dictionary
             .get("metatags", [{}])[0]  # Get the first element of 'metatags' or a default empty dict
             .get("og:description", "")  # Get 'og:description' or return an empty string
-)        # profile_description = profile.get("og:description", "")
-        print("\nProfile Description:", profile_description)
+        )
+        print(f"Processing profile: {profile.get('link', 'No Link')}")  # Debug: print profile link
+        print(f"Description: {profile_description}")  # Debug: print description
+
         if not profile_description:
+            print("Skipped: No description found.")
             continue
 
         messages.append({"role": "user", "content": f"Profile Description:\n{profile_description}"})
@@ -100,11 +141,13 @@ def rank_profiles_with_llm(profiles, prompt):
                 max_tokens=50
             )
             response = chat_completion.choices[0].message.content.strip()
+            print(f"LLM Response: {response}")  # Debug: print GPT response
 
             # Extract the numerical score from GPT response
             match = re.search(r"\b\d+\b", response)  # Match any standalone number
             if match:
                 score = int(match.group())  # Convert matched number to integer
+                print(f"Score extracted: {score}")  # Debug: print extracted score
             else:
                 score = 0  # Default score if no number is found in response
 
@@ -116,7 +159,9 @@ def rank_profiles_with_llm(profiles, prompt):
         # Remove the added user message to reset for the next profile
         messages.pop()
 
+    print(f"Total ranked profiles: {len(ranked_profiles)}")  # Debug: print total ranked profiles
     return sorted(ranked_profiles, key=lambda x: x["score"], reverse=True)
+
 
 # ----------------------------------------------------------------------------------- Google CSE
 def google_cse_search(query, num_results=100):
@@ -142,26 +187,38 @@ def google_cse_search(query, num_results=100):
         else:
             st.error(f"Error with Google CSE API: {response.status_code} - {response.text}")
             break
-    # print(all_results)
+    # print(all_results)    # Debug
     return all_results[:num_results]  # Ensure we cap results at `num_results`
 
-# Combine search, ranking, and filtering
-def get_top_profiles(query, prompt, num_results=100, top_n=10):
-    """
-    Search for LinkedIn profiles, rank them using GPT-4o, and return the top N profiles.
-    """
-    st.info("Searching for profiles...")
-    profiles = google_cse_search(query, num_results=num_results)
-    if not profiles:
-        st.warning("No profiles found.")
-        return []
+# ----------------------------------------------------------------------------------- Google CSE
 
-    st.info("Ranking profiles...")
-    ranked_profiles = rank_profiles_with_llm(profiles, prompt)
+def get_profile_data(profile_data):
+    """
+    Use the LLM to extract name, company, link, domain, and location from the profile data.
+    """
+    messages = [
+        {"role": "system", "content": """
+            You are a professional data extractor.
+            I want you to extract the name, company, link, domain, and location from the provided LinkedIn profile data.
+            and ONLY RETURN THEM IN THE ORDER OF NAME, COMPANY, LINK, DOMAIN, LOCATION separated by commas.
+        """},
+        {"role": "user", "content": f"Profile Data:\n{profile_data}"}
+    ]
 
-    # Filter top N profiles
-    top_profiles = ranked_profiles[:top_n]
-    return top_profiles
+    try:
+        # Query the LLM
+        chat_completion = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=messages,
+            max_tokens=50
+        )
+        
+        # Extract the content from the LLM response
+        response = chat_completion.choices[0].message.content.strip()
+        return response
+    except Exception as e:
+        print(f"Error extracting data with LLM: {e}")
+        return None
 
 
 # ----------------------------------------------------------------------------------- Streamlit UI
@@ -194,18 +251,58 @@ if st.button("Search LinkedIn Profiles"):
                 profile_table = []
                 for i, profile in enumerate(top_profiles, start=1):
                     profile_data = profile["profile"]
-                    profile_table.append({
-                        "Rank": i,
-                        "Title": profile_data.get("title", "No Title"),
-                        "Link": f"[Profile]({profile_data.get('link', '#')})",
-                        # "Description": profile_data.get("snippet", "No Description"),
-                        "Relevance Score": profile.get("score", 0)
-                    })
+                    # print(profile_data)
+                    # # Call the function to extract profile data
+                    # # name, company, link, domain, location = get_profile_data(profile_data)
+                    
+                    metatags = profile_data.get('pagemap', {}).get('metatags', [{}])[0]
+                    name = f"{metatags.get('profile:first_name', '').strip()} {metatags.get('profile:last_name', '').strip()}".strip()
+                    title = metatags.get('og:title', '').split(' - ')[1].strip() if 'og:title' in metatags else profile_data.get('title', '')
+                    url = metatags.get('og:url', profile_data.get('link', ''))
 
-                st.session_state["linkedin_results"] = pd.DataFrame(profile_table)
+                    extracted_data = get_profile_data(profile_data)
+                    print(f"Extracted Data: {extracted_data}")
+                    if extracted_data:
+                        # Parse the extracted data (comma-separated) into respective fields
+                        # name, company, link, domain, location = extracted_data.split(",")
+                        data = extracted_data.split(",")
+
+                        profile_table.append({
+                            "Rank": i,
+                            "Name": data[0].strip(),
+                            "Company": data[1].strip(),
+                            "Profile Link": data[2].strip(),
+                            # "Domain": domain.strip() if domain.strip() else "NO domain",
+                            "Location": data[4].strip(),
+                            "Relevance Score": profile.get("score", 0)
+                        })
+                    else:
+                        # Handle cases where data extraction fails
+                        profile_table.append({
+                            "Rank": i,
+                            "Name": "UNKNOWN",
+                            "Company": "UNKNOWN",
+                            "Profile Link": "UNKNOWN",
+                            # "Domain": "NO domain",
+                            "Location": "",
+                            "Relevance Score": profile.get("score", 0)
+                        })
+
+                # Create DataFrame
+                df = pd.DataFrame(profile_table)
+                st.session_state["linkedin_results"] = df
+                
+                # Convert the "Profile Link" column into clickable links
+                df["Profile Link"] = df["Profile Link"].apply(
+                    lambda url: f'<a href="{url}" target="_blank">{url}</a>'
+                )
+
+                # Display the DataFrame with clickable links
                 st.write("### Top LinkedIn Profiles")
-                st.table(st.session_state["linkedin_results"])
-
+                st.markdown(
+                    df.to_html(escape=False, index=False), unsafe_allow_html=True
+                )
+                
 if st.button("Export Results to CSV"):
     if not st.session_state["linkedin_results"].empty:
         csv_data = st.session_state["linkedin_results"].to_csv(index=False)
